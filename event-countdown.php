@@ -1,127 +1,70 @@
 <?php
-/*
-Plugin Name: Event Countdown Shortcode
-Plugin URI:  https://torbenb.info/download
-Description: Zeigt einen Countdown zu einem bestimmten Event per Shortcode [event_countdown] an und ermöglicht die Verwaltung des Events im Admin-Bereich.
-Version:     1.2
-Author:      TorbenB
-Author URI:  https://torbenb.info
-*/
+/**
+ * Plugin Name: Event Countdown
+ * Plugin URI:  https://github.com/MrTorbenB/event-countdown
+ * Description: Accessible live event countdowns with shortcode attributes and configurable defaults.
+ * Version:     2.0.0
+ * Requires at least: 6.4
+ * Requires PHP: 7.4
+ * Author:      TorbenB
+ * Author URI:  https://torbenb.info/
+ * License:     GPL-3.0-or-later
+ * Text Domain: torbenb-event-countdown
+ */
 
-// Shortcode-Handler-Funktion
-function event_countdown_shortcode($atts) {
-    // Holen des gespeicherten Event-Datums und -Namens
-    $event_date_str = get_option('event_countdown_date');
-    $event_name = get_option('event_countdown_name', 'Mein Event');
+defined( 'ABSPATH' ) || exit;
 
-    if (!$event_date_str) {
-        return "Bitte setzen Sie ein Datum für das Event im Admin-Bereich.";
-    }
-
-    // Event-Datum im deutschen Format in Unix-Zeitstempel konvertieren
-    $event_date = DateTime::createFromFormat('d.m.Y H:i:s', $event_date_str);
-    if (!$event_date) {
-        return "Das Event-Datum hat ein ungültiges Format. Bitte geben Sie das Datum im Format TT.MM.JJJJ HH:MM:SS an.";
-    }
-
-    $event_timestamp = $event_date->getTimestamp();
-    $current_timestamp = time();
-
-    // Berechne den Unterschied in Sekunden
-    $time_diff = $event_timestamp - $current_timestamp;
-
-    if ($time_diff > 0) {
-        // Tage, Stunden, Minuten und Sekunden berechnen
-        $days = floor($time_diff / (60 * 60 * 24));
-        $hours = floor(($time_diff % (60 * 60 * 24)) / (60 * 60));
-        $minutes = floor(($time_diff % (60 * 60)) / 60);
-        $seconds = $time_diff % 60;
-
-        // Countdown anzeigen
-        $output = "Noch verbleibende Zeit bis '<strong>{$event_name}</strong>': ";
-        $output .= "{$days} Tage, {$hours} Stunden, {$minutes} Minuten, {$seconds} Sekunden";
-
-        // Countdown zurückgeben
-        return $output;
-    } else {
-        // Falls das Datum überschritten ist
-        return "Das Event '<strong>{$event_name}</strong>' hat bereits stattgefunden.";
-    }
+function torbenb_event_sanitize_date( $value ): string {
+	$value = sanitize_text_field( (string) $value );
+	$date  = DateTimeImmutable::createFromFormat( 'Y-m-d\TH:i', $value, wp_timezone() );
+	return $date ? $value : '';
 }
 
-// Shortcode registrieren
-add_shortcode('event_countdown', 'event_countdown_shortcode');
-
-// Admin-Menü-Einstellungen hinzufügen
-function event_countdown_menu() {
-    add_menu_page(
-        'Event Countdown Einstellungen',
-        'Event Countdown',
-        'manage_options',
-        'event-countdown',
-        'event_countdown_options_page',
-        'dashicons-calendar-alt',
-        20
-    );
+function torbenb_event_register_settings(): void {
+	register_setting( 'torbenb_event_settings', 'torbenb_event_date', array( 'type' => 'string', 'sanitize_callback' => 'torbenb_event_sanitize_date', 'default' => '' ) );
+	register_setting( 'torbenb_event_settings', 'torbenb_event_name', array( 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field', 'default' => '' ) );
 }
-add_action('admin_menu', 'event_countdown_menu');
+add_action( 'admin_init', 'torbenb_event_register_settings' );
 
-// Admin-Einstellungsseite rendern
-function event_countdown_options_page() {
-    ?>
-    <div class="wrap">
-        <h1>Event Countdown Einstellungen</h1>
-        <form method="post" action="options.php">
-            <?php
-            settings_fields('event_countdown_options');
-            do_settings_sections('event-countdown');
-            submit_button();
-            ?>
-        </form>
-    </div>
-    <?php
+function torbenb_event_admin_menu(): void {
+	add_options_page( 'Event Countdown', 'Event Countdown', 'manage_options', 'torbenb-event-countdown', 'torbenb_event_settings_page' );
+}
+add_action( 'admin_menu', 'torbenb_event_admin_menu' );
+
+function torbenb_event_settings_page(): void {
+	if ( ! current_user_can( 'manage_options' ) ) return;
+	?>
+	<div class="wrap"><h1><?php esc_html_e( 'Event Countdown', 'torbenb-event-countdown' ); ?></h1><form method="post" action="options.php">
+	<?php settings_fields( 'torbenb_event_settings' ); ?>
+	<table class="form-table"><tr><th><label for="torbenb_event_name"><?php esc_html_e( 'Default event name', 'torbenb-event-countdown' ); ?></label></th><td><input class="regular-text" id="torbenb_event_name" name="torbenb_event_name" value="<?php echo esc_attr( get_option( 'torbenb_event_name', '' ) ); ?>"></td></tr>
+	<tr><th><label for="torbenb_event_date"><?php esc_html_e( 'Default date', 'torbenb-event-countdown' ); ?></label></th><td><input type="datetime-local" id="torbenb_event_date" name="torbenb_event_date" value="<?php echo esc_attr( get_option( 'torbenb_event_date', '' ) ); ?>"><p class="description"><?php esc_html_e( 'Uses the timezone configured in WordPress.', 'torbenb-event-countdown' ); ?></p></td></tr></table><?php submit_button(); ?></form></div>
+	<?php
 }
 
-// Einstellungen registrieren
-function event_countdown_settings_init() {
-    register_setting('event_countdown_options', 'event_countdown_date');
-    register_setting('event_countdown_options', 'event_countdown_name');
+function torbenb_event_countdown_shortcode( $atts ): string {
+	$atts = shortcode_atts(
+		array(
+			'date'    => get_option( 'torbenb_event_date', '' ),
+			'name'    => get_option( 'torbenb_event_name', __( 'Event', 'torbenb-event-countdown' ) ),
+			'expired' => __( 'This event has started.', 'torbenb-event-countdown' ),
+			'class'   => '',
+		),
+		$atts,
+		'event_countdown'
+	);
+	$date_string = sanitize_text_field( (string) $atts['date'] );
+	$date = DateTimeImmutable::createFromFormat( 'Y-m-d\TH:i', $date_string, wp_timezone() );
+	if ( ! $date ) {
+		return current_user_can( 'manage_options' ) ? '<span class="event-countdown event-countdown--error">' . esc_html__( 'Set a valid event date in ISO format, for example 2027-12-31T18:00.', 'torbenb-event-countdown' ) . '</span>' : '';
+	}
 
-    add_settings_section(
-        'event_countdown_section',
-        'Event Datum, Uhrzeit und Name',
-        'event_countdown_section_callback',
-        'event-countdown'
-    );
+	wp_enqueue_script( 'torbenb-event-countdown', plugins_url( 'assets/event-countdown.js', __FILE__ ), array(), '2.0.0', true );
+	wp_enqueue_style( 'torbenb-event-countdown', plugins_url( 'assets/event-countdown.css', __FILE__ ), array(), '2.0.0' );
+	$classes = trim( 'event-countdown ' . sanitize_html_class( (string) $atts['class'] ) );
 
-    add_settings_field(
-        'event_countdown_date',
-        'Event Datum (TT.MM.JJJJ HH:MM:SS)',
-        'event_countdown_date_render',
-        'event-countdown',
-        'event_countdown_section'
-    );
-
-    add_settings_field(
-        'event_countdown_name',
-        'Event Name',
-        'event_countdown_name_render',
-        'event-countdown',
-        'event_countdown_section'
-    );
+	return sprintf(
+		'<section class="%1$s" data-event-countdown data-target="%2$s" data-expired="%3$s"><h3 class="event-countdown__name">%4$s</h3><div class="event-countdown__timer" role="timer" aria-live="off"><span><strong data-days>0</strong><small>%5$s</small></span><span><strong data-hours>00</strong><small>%6$s</small></span><span><strong data-minutes>00</strong><small>%7$s</small></span><span><strong data-seconds>00</strong><small>%8$s</small></span></div></section>',
+		esc_attr( $classes ), esc_attr( $date->format( DATE_ATOM ) ), esc_attr( sanitize_text_field( (string) $atts['expired'] ) ), esc_html( sanitize_text_field( (string) $atts['name'] ) ), esc_html__( 'Days', 'torbenb-event-countdown' ), esc_html__( 'Hours', 'torbenb-event-countdown' ), esc_html__( 'Minutes', 'torbenb-event-countdown' ), esc_html__( 'Seconds', 'torbenb-event-countdown' )
+	);
 }
-add_action('admin_init', 'event_countdown_settings_init');
-
-function event_countdown_section_callback() {
-    echo 'Bitte geben Sie das Datum, die Uhrzeit und den Namen für das Event ein.';
-}
-
-function event_countdown_date_render() {
-    $event_date = get_option('event_countdown_date', '');
-    echo "<input type='text' name='event_countdown_date' value='" . esc_attr($event_date) . "' size='25'>";
-}
-
-function event_countdown_name_render() {
-    $event_name = get_option('event_countdown_name', 'Mein Event');
-    echo "<input type='text' name='event_countdown_name' value='" . esc_attr($event_name) . "' size='25'>";
-}
+add_shortcode( 'event_countdown', 'torbenb_event_countdown_shortcode' );
